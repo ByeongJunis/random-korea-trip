@@ -152,11 +152,107 @@
         max-height: 58vh;
       }
     }
-  </style>
+  
+#introScreen{
+position:fixed;
+inset:0;
+z-index:99999;
+
+display:flex;
+justify-content:center;
+align-items:center;
+
+color:white;
+text-align:center;
+
+background:
+linear-gradient(
+rgba(0,70,120,0.35),
+rgba(0,120,180,0.25)
+),
+url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2000&q=80");
+
+background-size:cover;
+background-position:center;
+background-repeat:no-repeat;
+}
+.intro-content h1{
+font-size:52px;
+margin-bottom:20px;
+font-weight:900;
+text-shadow:0 3px 10px rgba(0,0,0,0.3);
+}
+.intro-content p{
+font-size:22px;
+line-height:1.8;
+margin-bottom:30px;
+text-shadow:0 2px 6px rgba(0,0,0,0.3);
+}
+.intro-content button{
+
+width:240px;
+
+padding:18px;
+
+font-size:22px;
+
+font-weight:bold;
+
+background:white;
+
+color:#0086d1;
+
+border:none;
+
+border-radius:14px;
+
+cursor:pointer;
+
+transition:0.2s;
+}
+
+.intro-content button:hover{
+transform:scale(1.05);
+}
+.intro-content{
+padding:40px;
+max-width:600px;
+
+background:rgba(0,0,0,0.25);
+
+backdrop-filter:blur(8px);
+
+border-radius:24px;
+
+box-shadow:
+0 10px 30px rgba(0,0,0,0.25);
+}
+.panel-header{display:none}
+@media (max-width:768px){
+ .panel{left:0!important;right:0!important;bottom:0!important;top:auto!important;transform:none!important;width:100%!important;border-radius:20px 20px 0 0}
+ .panel.collapsed{max-height:80px;overflow:hidden}
+ .panel.expanded{max-height:65vh}
+ .panel-header{display:block;text-align:center;font-weight:bold;padding-bottom:10px;cursor:pointer}
+}
+
+</style>
 </head>
 
 <body>
-  <div class="panel">
+
+<div id="introScreen">
+  <div class="intro-content">
+    <h1>🎯 여름휴가는 역시 랜덤다트</h1>
+    <p>어디로 떠날지 고민된다면?<br>눌러보거라</p>
+    <button onclick="startService()">시작하기</button>
+  </div>
+</div>
+
+<div id="mainApp" style="display:none;">
+  <div class="panel collapsed" id="panel">
+    <div class="panel-header" onclick="togglePanel()">
+      <span id="panelArrow">▲</span> 결과 보기
+    </div>
     <h2>🎯 랜덤 한국 여행 다트</h2>
 
     <select id="mainRegion" onchange="updateSubRegionOptions()">
@@ -246,9 +342,9 @@
       ],
       capital: [
         ["capital_all", "수도권 전체"],
-        ["서울시", "서울시"],
+        ["서울특별시", "서울특별시"],
         ["경기도", "경기도"],
-        ["인천시", "인천시"]
+        ["인천광역시", "인천광역시"]
       ],
       gangwon: [
         ["강원도", "강원도"]
@@ -257,14 +353,14 @@
         ["chungcheong_all", "충청도 전체"],
         ["충청남도", "충청남도"],
         ["충청북도", "충청북도"],
-        ["대전시", "대전시"],
-        ["세종시", "세종시"]
+        ["대전광역시", "대전광역시"],
+        ["세종특별자치시", "세종특별자치시"]
       ],
       jeolla: [
         ["jeolla_all", "전라도 전체"],
         ["전라남도", "전라남도"],
         ["전라북도", "전라북도"],
-        ["광주시", "광주시"]
+        ["광주광역시", "광주광역시"]
       ],
       gyeongsang: [
         ["gyeongsang_all", "경상도 전체"],
@@ -360,7 +456,7 @@
       } else if (value === "capital_all") {
         names = ["서울특별시", "경기도", "인천광역시"];
       } else if (value === "chungcheong_all") {
-        names = ["충청남도", "충청북도", "대전광역시", "세종시"];
+        names = ["충청남도", "충청북도", "대전광역시", "세종특별자치시"];
       } else if (value === "jeolla_all") {
         names = ["전라남도", "전라북도", "광주광역시"];
       } else if (value === "gyeongsang_all") {
@@ -778,6 +874,13 @@ const response = await fetch(endpoint, {
         .openPopup();
 
       map.flyTo([point.lat, point.lng], 11);
+      if(window.innerWidth<=768){
+        const panel=document.getElementById('panel');
+        if(panel){
+          panel.classList.remove('expanded');
+          panel.classList.add('collapsed');
+        }
+      }
 
       latestResult = {
         lat: point.lat,
@@ -858,7 +961,33 @@ const response = await fetch(endpoint, {
         .catch(() => alert("복사에 실패했습니다."));
     }
 
-    loadKoreaMap();
+    
+function startService() {
+
+  document.getElementById("introScreen").style.display = "none";
+  document.getElementById("mainApp").style.display = "block";
+
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 300);
+
+}
+function togglePanel(){
+ const panel=document.getElementById('panel');
+ const arrow=document.getElementById('panelArrow');
+ if(panel.classList.contains('collapsed')){
+   panel.classList.remove('collapsed');
+   panel.classList.add('expanded');
+   arrow.innerText='▼';
+ }else{
+   panel.classList.remove('expanded');
+   panel.classList.add('collapsed');
+   arrow.innerText='▲';
+ }
+}
+
+loadKoreaMap();
   </script>
+</div>
 </body>
 </html>
