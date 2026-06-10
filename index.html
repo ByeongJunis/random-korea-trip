@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>여름휴가는 역시 랜덤다트</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100vw;
+      height: 100vh;
+      background: #111;
+    }
+
+    .panel {
+      position: absolute;
+      top: 50%;
+      right: 20px;
+      transform: translateY(-50%);
+      z-index: 1000;
+      background: white;
+      padding: 16px;
+      border-radius: 16px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+      width: 390px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      text-align: center;
+    }
+
+    select, button {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 15px;
+      margin-top: 8px;
+      box-sizing: border-box;
+    }
+
+    select {
+      border: 1px solid #ccc;
+      background: white;
+    }
+
+    button {
+      border: none;
+      background: #ff4d4d;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #aaa;
+      cursor: not-allowed;
+    }
+
+    .copy-btn {
+      background: #333;
+    }
+
+    .result {
+      margin-top: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      text-align: left;
+    }
+
+    .result a {
+      color: #0066cc;
+      font-weight: bold;
+      text-decoration: none;
+    }
+
+    .section {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid #ddd;
+    }
+
+    .section-title {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .place-card {
+      display: flex;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .place-card img {
+      width: 62px;
+      height: 62px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #eee;
+      flex-shrink: 0;
+    }
+
+    .place-name {
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    .place-meta {
+      color: #666;
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .history {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid #ddd;
+      font-size: 13px;
+    }
+
+    .history-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .history-item {
+      padding: 6px 0;
+      border-bottom: 1px solid #eee;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 768px) {
+      .panel {
+        top: auto;
+        right: 50%;
+        bottom: 16px;
+        transform: translateX(50%);
+        width: calc(100vw - 48px);
+        max-height: 58vh;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="panel">
+    <h2>🎯 랜덤 한국 여행 다트</h2>
+
+    <select id="mainRegion" onchange="updateSubRegionOptions()">
+      <option value="national">전국</option>
+      <option value="national_no_jeju">전국(제주도 제외)</option>
+      <option value="capital">수도권</option>
+      <option value="gangwon">강원도</option>
+      <option value="chungcheong">충청도</option>
+      <option value="jeolla">전라도</option>
+      <option value="gyeongsang">경상도</option>
+      <option value="jeju">제주도</option>
+    </select>
+
+    <select id="subRegion" onchange="applySelectedRegion()">
+      <option value="national">전국</option>
+    </select>
+
+    <button id="dartBtn" onclick="throwDart()" disabled>
+      지도 불러오는 중...
+    </button>
+
+    <button class="copy-btn" onclick="copyAddress()">
+      주소 복사
+    </button>
+
+    <div class="result" id="result">
+      먼저 권역을 선택한 뒤 다트를 던져주세요.
+    </div>
+
+    <div class="history">
+      <div class="history-title">최근 다트 기록</div>
+      <div id="historyList">아직 기록이 없습니다.</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+  <script>
+    const provinceGeoJsonUrl =
+      "https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2018/json/skorea-provinces-2018-geo.json";
+
+    const municipalityGeoJsonUrl =
+      "https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2018/json/skorea-municipalities-2018-geo.json";
+
+    const defaultImage =
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Map_marker.svg/120px-Map_marker.svg.png";
+
+    const map = L.map("map", {
+      center: [36.3, 127.8],
+      zoom: 7,
+      minZoom: 7,
+      maxZoom: 15,
+      maxBounds: [
+        [32.5, 124.0],
+        [39.0, 131.0]
+      ],
+      maxBoundsViscosity: 1.0
+    });
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap"
+    }).addTo(map);
+
+    let provinceGeoJson = null;
+    let municipalityGeoJson = null;
+    let selectedRegionGeoJson = null;
+
+    let maskLayer = null;
+    let selectedBorderLayer = null;
+    let marker = null;
+    let placeMarkers = [];
+    let latestResult = null;
+    let dartHistory = [];
+
+    let currentRequestId = 0;
+    let currentAbortController = null;
+
+    const regionOptions = {
+      national: [
+        ["national", "전국"]
+      ],
+      national_no_jeju: [
+        ["national_no_jeju", "전국(제주도 제외)"]
+      ],
+      capital: [
+        ["capital_all", "수도권 전체"],
+        ["서울시", "서울시"],
+        ["경기도", "경기도"],
+        ["인천시", "인천시"]
+      ],
+      gangwon: [
+        ["강원도", "강원도"]
+      ],
+      chungcheong: [
+        ["chungcheong_all", "충청도 전체"],
+        ["충청남도", "충청남도"],
+        ["충청북도", "충청북도"],
+        ["대전시", "대전시"],
+        ["세종시", "세종시"]
+      ],
+      jeolla: [
+        ["jeolla_all", "전라도 전체"],
+        ["전라남도", "전라남도"],
+        ["전라북도", "전라북도"],
+        ["광주시", "광주시"]
+      ],
+      gyeongsang: [
+        ["gyeongsang_all", "경상도 전체"],
+        ["경상남도", "경상남도"],
+        ["경상북도", "경상북도"],
+        ["부산광역시", "부산광역시"],
+["대구광역시", "대구광역시"],
+["울산광역시", "울산광역시"]
+      ],
+      jeju: [
+        ["제주도", "제주도"]
+      ]
+    };
+
+    async function loadKoreaMap() {
+      const provinceRes = await fetch(provinceGeoJsonUrl);
+      provinceGeoJson = await provinceRes.json();
+
+      const municipalityRes = await fetch(municipalityGeoJsonUrl);
+      municipalityGeoJson = await municipalityRes.json();
+
+      provinceGeoJson.features.forEach(feature => {
+        feature.properties.normalizedName = normalizeRegionName(getPropertyName(feature.properties));
+      });
+
+      municipalityGeoJson.features.forEach(feature => {
+        feature.properties.normalizedName = normalizeRegionName(getPropertyName(feature.properties));
+      });
+
+      updateSubRegionOptions();
+
+      const btn = document.getElementById("dartBtn");
+      btn.disabled = false;
+      btn.innerText = "다트 던지기";
+    }
+
+    function updateSubRegionOptions() {
+      const mainValue = document.getElementById("mainRegion").value;
+      const subSelect = document.getElementById("subRegion");
+      const options = regionOptions[mainValue] || regionOptions.national;
+
+      subSelect.innerHTML = options.map(([value, label]) => {
+        return `<option value="${value}">${label}</option>`;
+      }).join("");
+
+      applySelectedRegion();
+    }
+
+    function applySelectedRegion() {
+      if (!provinceGeoJson) return;
+
+      const subValue = document.getElementById("subRegion").value;
+
+      selectedRegionGeoJson = makeSelectedRegionGeoJson(subValue);
+
+      if (selectedBorderLayer) {
+        map.removeLayer(selectedBorderLayer);
+      }
+
+      if (maskLayer) {
+        map.removeLayer(maskLayer);
+      }
+
+      selectedBorderLayer = L.geoJSON(selectedRegionGeoJson, {
+        style: {
+          color: "#ff3333",
+          weight: 2,
+          fillColor: "transparent",
+          fillOpacity: 0
+        }
+      }).addTo(map);
+
+      addOutsideMask(selectedRegionGeoJson);
+
+      const bounds = selectedBorderLayer.getBounds();
+      map.fitBounds(bounds.pad(0.12));
+
+      document.getElementById("result").innerHTML =
+        `선택 범위: <strong>${getSelectedRegionLabel()}</strong><br>다트를 던져주세요.`;
+    }
+
+    function makeSelectedRegionGeoJson(value) {
+      let names = [];
+
+      if (value === "national") {
+        return provinceGeoJson;
+      }
+
+      if (value === "national_no_jeju") {
+        names = provinceGeoJson.features
+          .map(f => f.properties.normalizedName)
+          .filter(name => name !== "제주도");
+      } else if (value === "capital_all") {
+        names = ["서울특별시", "경기도", "인천광역시"];
+      } else if (value === "chungcheong_all") {
+        names = ["충청남도", "충청북도", "대전광역시", "세종시"];
+      } else if (value === "jeolla_all") {
+        names = ["전라남도", "전라북도", "광주광역시"];
+      } else if (value === "gyeongsang_all") {
+        names = ["경상남도", "경상북도", "부산광역시", "대구광역시", "울산광역시"];
+      } else {
+        names = [value];
+      }
+
+      return {
+        type: "FeatureCollection",
+        features: provinceGeoJson.features.filter(feature =>
+          names.includes(feature.properties.normalizedName)
+        )
+      };
+    }
+
+    function getSelectedRegionLabel() {
+      const sub = document.getElementById("subRegion");
+      return sub.options[sub.selectedIndex].text;
+    }
+
+    function addOutsideMask(geojson) {
+      const outerWorld = [
+        [90, -180],
+        [90, 180],
+        [-90, 180],
+        [-90, -180]
+      ];
+
+      const holes = [];
+
+      geojson.features.forEach(feature => {
+        const geom = feature.geometry;
+
+        if (geom.type === "Polygon") {
+          geom.coordinates.forEach(ring => {
+            holes.push(ring.map(coord => [coord[1], coord[0]]));
+          });
+        }
+
+        if (geom.type === "MultiPolygon") {
+          geom.coordinates.forEach(polygon => {
+            polygon.forEach(ring => {
+              holes.push(ring.map(coord => [coord[1], coord[0]]));
+            });
+          });
+        }
+      });
+
+      maskLayer = L.polygon([outerWorld, ...holes], {
+        stroke: false,
+        fillColor: "#000",
+        fillOpacity: 0.75,
+        interactive: false
+      }).addTo(map);
+    }
+
+    function getRandomLandPoint() {
+      const bbox = turf.bbox(selectedRegionGeoJson);
+
+      while (true) {
+        const lng = bbox[0] + Math.random() * (bbox[2] - bbox[0]);
+        const lat = bbox[1] + Math.random() * (bbox[3] - bbox[1]);
+        const point = turf.point([lng, lat]);
+
+        const isInside = selectedRegionGeoJson.features.some(feature => {
+          return turf.booleanPointInPolygon(point, feature);
+        });
+
+        if (isInside) {
+          return { lat, lng };
+        }
+      }
+    }
+
+    function normalizeRegionName(name) {
+      if (!name) return "";
+
+      return name
+        .replaceAll("강원특별자치도", "강원도")
+        .replaceAll("전북특별자치도", "전라북도")
+        .replaceAll("전라북도특별자치도", "전라북도")
+        .replaceAll("제주특별자치도", "제주도")
+    }
+
+    function getPropertyName(properties) {
+      return (
+        properties.name ||
+        properties.NAME ||
+        properties.name_kor ||
+        properties.SIG_KOR_NM ||
+        properties.CTP_KOR_NM ||
+        properties.adm_nm ||
+        properties.sidonm ||
+        properties.sggnm ||
+        ""
+      );
+    }
+
+    function findRegionByPoint(lat, lng, geojson) {
+      const point = turf.point([lng, lat]);
+
+      for (const feature of geojson.features) {
+        if (turf.booleanPointInPolygon(point, feature)) {
+          return normalizeRegionName(getPropertyName(feature.properties));
+        }
+      }
+
+      return "";
+    }
+
+    function getAdminAddress(lat, lng) {
+      const province = findRegionByPoint(lat, lng, provinceGeoJson);
+      const municipality = findRegionByPoint(lat, lng, municipalityGeoJson);
+
+      return [province, municipality].filter(Boolean).join(" ");
+    }
+
+    function makeDetailedAddress(data, lat, lng) {
+      const addr = data.address || {};
+
+      const sido = normalizeRegionName(addr.province || addr.state || "");
+      const sigungu = addr.city || addr.county || addr.city_district || addr.borough || "";
+      const eupmyeondong = addr.town || addr.village || addr.suburb || addr.neighbourhood || "";
+      const road = addr.road || addr.pedestrian || addr.footway || addr.path || "";
+
+      const address = [sido, sigungu, eupmyeondong, road]
+        .filter(Boolean)
+        .join(" ");
+
+      return normalizeRegionName(address || getAdminAddress(lat, lng));
+    }
+
+    async function getAddressFromCoord(lat, lng, signal) {
+      const fallback = getAdminAddress(lat, lng) || `${getSelectedRegionLabel()} 인근`;
+
+      const url =
+        `https://nominatim.openstreetmap.org/reverse?` +
+        `format=jsonv2&lat=${lat}&lon=${lng}&accept-language=ko&zoom=18&addressdetails=1`;
+
+      try {
+        const response = await fetch(url, { signal });
+        const data = await response.json();
+        return makeDetailedAddress(data, lat, lng) || fallback;
+      } catch (error) {
+        if (error.name === "AbortError") return null;
+        return fallback;
+      }
+    }
+
+    function getDistanceKm(lat1, lng1, lat2, lng2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) *
+        Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    async function getWikipediaImage(title, signal) {
+      if (!title) return defaultImage;
+
+      try {
+        const url =
+          `https://ko.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+
+        const res = await fetch(url, { signal });
+        const data = await res.json();
+
+        return data.thumbnail?.source || defaultImage;
+      } catch (error) {
+        return defaultImage;
+      }
+    }
+
+    function getPlaceType(tags, type) {
+      if (type === "food") {
+        if (tags.amenity === "cafe") return "카페";
+        if (tags.amenity === "fast_food") return "간단식";
+        if (tags.amenity === "restaurant") return "식당";
+        return "맛집";
+      }
+
+      if (tags.tourism === "museum") return "박물관";
+      if (tags.tourism === "viewpoint") return "전망지";
+      if (tags.tourism === "theme_park") return "테마파크";
+      if (tags.historic) return "역사유적";
+      if (tags.leisure === "park") return "공원";
+      if (tags.natural === "peak") return "산";
+      if (tags.natural === "beach") return "해변";
+      return "관광지";
+    }
+
+    async function fetchOverpass(query, signal) {
+      const endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter"
+      ];
+
+      for (const endpoint of endpoints) {
+        try {
+          const timeoutSignal = AbortSignal.timeout(5000);
+
+const response = await fetch(endpoint, {
+  method: "POST",
+  body: query,
+  signal: AbortSignal.any([
+    signal,
+    timeoutSignal
+  ])
+});
+
+          if (!response.ok) continue;
+
+          return await response.json();
+        } catch (error) {
+          if (error.name === "AbortError") throw error;
+        }
+      }
+
+      return { elements: [] };
+    }
+
+    async function getNearbyPlaces(lat, lng, type, signal) {
+      const radiuses = [10000, 20000, 30000];
+
+      for (const radius of radiuses) {
+        const queryPart = type === "food"
+          ? `
+            node["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub"](around:${radius},${lat},${lng});
+            way["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub"](around:${radius},${lat},${lng});
+            relation["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub"](around:${radius},${lat},${lng});
+          `
+          : `
+            node["tourism"~"attraction|museum|viewpoint|theme_park|gallery|zoo|aquarium"](around:${radius},${lat},${lng});
+            way["tourism"~"attraction|museum|viewpoint|theme_park|gallery|zoo|aquarium"](around:${radius},${lat},${lng});
+            relation["tourism"~"attraction|museum|viewpoint|theme_park|gallery|zoo|aquarium"](around:${radius},${lat},${lng});
+
+            node["historic"](around:${radius},${lat},${lng});
+            way["historic"](around:${radius},${lat},${lng});
+            relation["historic"](around:${radius},${lat},${lng});
+
+            node["leisure"~"park|garden|nature_reserve"](around:${radius},${lat},${lng});
+            way["leisure"~"park|garden|nature_reserve"](around:${radius},${lat},${lng});
+            relation["leisure"~"park|garden|nature_reserve"](around:${radius},${lat},${lng});
+
+            node["natural"~"peak|beach|spring|wood|water"](around:${radius},${lat},${lng});
+            way["natural"~"peak|beach|spring|wood|water"](around:${radius},${lat},${lng});
+            relation["natural"~"peak|beach|spring|wood|water"](around:${radius},${lat},${lng});
+          `;
+
+        const query = `
+          [out:json][timeout:25];
+          (
+            ${queryPart}
+          );
+          out center tags 80;
+        `;
+
+        try {
+          const data = await fetchOverpass(query, signal);
+
+          const rawPlaces = data.elements
+            .map(item => {
+              const pLat = item.lat || item.center?.lat;
+              const pLng = item.lon || item.center?.lon;
+              const tags = item.tags || {};
+              const name = tags["name:ko"] || tags.name || tags["name:en"];
+
+              if (!pLat || !pLng || !name) return null;
+
+              return {
+                name,
+                lat: pLat,
+                lng: pLng,
+                type: getPlaceType(tags, type),
+                distance: getDistanceKm(lat, lng, pLat, pLng),
+                wikipedia: tags.wikipedia
+                  ? tags.wikipedia.replace("ko:", "").replace("en:", "")
+                  : name
+              };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 3);
+
+          if (rawPlaces.length > 0 || radius === radiuses[radiuses.length - 1]) {
+            const placesWithImages = [];
+
+            for (const place of rawPlaces) {
+              const image = await getWikipediaImage(place.wikipedia, signal);
+              placesWithImages.push({ ...place, image });
+            }
+
+            return {
+              radius,
+              places: placesWithImages
+            };
+          }
+        } catch (error) {
+          if (error.name === "AbortError") throw error;
+        }
+      }
+
+      return {
+        radius: 30000,
+        places: []
+      };
+    }
+
+    function clearPlaceMarkers() {
+      placeMarkers.forEach(m => map.removeLayer(m));
+      placeMarkers = [];
+    }
+
+    function showPlaceMarkers(places) {
+      clearPlaceMarkers();
+
+      places.forEach(place => {
+        const m = L.circleMarker([place.lat, place.lng], {
+          radius: 7,
+          color: "#0066cc",
+          fillColor: "#0066cc",
+          fillOpacity: 0.85
+        })
+          .addTo(map)
+          .bindPopup(`${place.name}<br>${place.type}<br>약 ${place.distance.toFixed(1)}km`);
+
+        placeMarkers.push(m);
+      });
+    }
+
+    function renderPlaceSection(title, result) {
+      const places = result.places || [];
+      const km = Math.round(result.radius / 1000);
+
+      if (!places.length) {
+        return `
+          <div class="section">
+            <div class="section-title">${title}</div>
+            ${km}km 이내에서 지도 데이터 기반 추천을 찾지 못했습니다.<br>
+            <span style="color:#666;">네이버지도에서 직접 검색하는 것을 추천합니다.</span>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="section">
+          <div class="section-title">${title} <span style="color:#666;font-weight:normal;">(${km}km 이내)</span></div>
+          ${places.map(place => `
+            <div class="place-card">
+              <img src="${place.image}" alt="${place.name}">
+              <div>
+                <div class="place-name">${place.name}</div>
+                <div class="place-meta">${place.type} · 약 ${place.distance.toFixed(1)}km</div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function getNaverMapUrl(lat, lng, address) {
+      return `https://map.naver.com/p/search/${encodeURIComponent(address || `${lat},${lng}`)}`;
+    }
+
+    function addHistory(address) {
+      dartHistory.unshift(address);
+      dartHistory = dartHistory.slice(0, 5);
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const historyList = document.getElementById("historyList");
+
+      if (dartHistory.length === 0) {
+        historyList.innerHTML = "아직 기록이 없습니다.";
+        return;
+      }
+
+      historyList.innerHTML = dartHistory.map((address, index) => {
+        return `<div class="history-item">${index + 1}. ${address}</div>`;
+      }).join("");
+    }
+
+    async function throwDart() {
+      currentRequestId += 1;
+      const requestId = currentRequestId;
+
+      if (currentAbortController) {
+        currentAbortController.abort();
+      }
+
+      currentAbortController = new AbortController();
+      const signal = currentAbortController.signal;
+
+      const point = getRandomLandPoint();
+
+      if (marker) {
+        map.removeLayer(marker);
+      }
+
+      clearPlaceMarkers();
+
+      marker = L.marker([point.lat, point.lng])
+        .addTo(map)
+        .bindPopup("🎯 랜덤 위치")
+        .openPopup();
+
+      map.flyTo([point.lat, point.lng], 11);
+
+      latestResult = {
+        lat: point.lat,
+        lng: point.lng,
+        address: ""
+      };
+
+      document.getElementById("result").innerHTML = `
+        <strong>📍 찍힌 위치</strong><br>
+        주소 확인 중...
+      `;
+
+      try {
+        const address = await getAddressFromCoord(point.lat, point.lng, signal);
+
+        if (requestId !== currentRequestId || signal.aborted || address === null) return;
+
+        latestResult.address = address;
+        marker.bindPopup(`🎯 ${address}`).openPopup();
+        addHistory(address);
+
+        document.getElementById("result").innerHTML = `
+          <strong>📍 찍힌 위치</strong><br>
+          ${address}<br><br>
+
+          <a target="_blank" href="${getNaverMapUrl(point.lat, point.lng, address)}">
+            네이버지도에서 위치 보기
+          </a>
+
+          <div class="section">
+            <div class="section-title">추천 검색 중...</div>
+            관광지와 맛집을 찾는 중입니다.<br>
+          </div>
+        `;
+
+        const [tourResult, foodResult] = await Promise.all([
+          getNearbyPlaces(point.lat, point.lng, "tour", signal),
+          getNearbyPlaces(point.lat, point.lng, "food", signal)
+        ]);
+
+        if (requestId !== currentRequestId || signal.aborted) return;
+
+        showPlaceMarkers([
+          ...tourResult.places,
+          ...foodResult.places
+        ]);
+
+        document.getElementById("result").innerHTML = `
+          <strong>📍 찍힌 위치</strong><br>
+          ${address}<br><br>
+
+          <a target="_blank" href="${getNaverMapUrl(point.lat, point.lng, address)}">
+            네이버지도에서 위치 보기
+          </a>
+
+          ${renderPlaceSection("🏞️ 주변 관광지 추천", tourResult)}
+          ${renderPlaceSection("🍽️ 주변 맛집 추천", foodResult)}
+        `;
+      } catch (error) {
+        if (error.name === "AbortError") return;
+
+        document.getElementById("result").innerHTML = `
+          <strong>📍 찍힌 위치</strong><br>
+          ${getAdminAddress(point.lat, point.lng) || "주소 확인 실패"}<br><br>
+          다시 다트를 던져주세요.
+        `;
+      }
+    }
+
+    function copyAddress() {
+      if (!latestResult || !latestResult.address) {
+        alert("복사할 주소가 아직 없습니다.");
+        return;
+      }
+
+      navigator.clipboard.writeText(latestResult.address)
+        .then(() => alert("주소가 복사되었습니다."))
+        .catch(() => alert("복사에 실패했습니다."));
+    }
+
+    loadKoreaMap();
+  </script>
+</body>
+</html>
